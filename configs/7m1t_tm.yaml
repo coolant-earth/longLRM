@@ -42,6 +42,7 @@ training:
   grad_clip_norm: 10.0
 
   # dataloader
+  # 4
   num_workers: 4
   prefetch_factor: 32
 
@@ -63,9 +64,9 @@ training:
   gaussian_depth_loss: 0.01
 
   # logging
-  print_every: 20
-  wandb_every: 50
-  checkpoint_every: 1000
-  vis_every: 250
-  save_gaussian_every: 1000
-  save_video_every: 250
+  print_every: 10
+  wandb_every: 10
+  checkpoint_every: 500
+  vis_every: 100
+  save_gaussian_every: 500
+  save_video_every: 500
