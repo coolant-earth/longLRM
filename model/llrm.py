@@ -459,6 +459,9 @@ class LongLRM(nn.Module):
         https://github.com/graphdeco-inria/gaussian-splatting/blob/main/scene/gaussian_model.py
         """
         from plyfile import PlyData, PlyElement
+        import matplotlib.pyplot as plt
+        import torchvision
+        
         xyz = gaussian_dict["xyz"].detach().cpu().float() # (N, 3)
         normal = torch.zeros_like(xyz) # (N, 3)
         N = xyz.shape[0]
@@ -472,6 +475,19 @@ class LongLRM(nn.Module):
         scale = gaussian_dict["scale"].detach().cpu().float() # (N, 3)
         opacity = gaussian_dict["opacity"].detach().cpu().float() # (N, 1)
         rotation = gaussian_dict["rotation"].detach().cpu().float() # (N, 4)
+        
+        # Apply opacity threshold if specified
+        if opacity_threshold is not None:
+            keep_mask = opacity.squeeze(-1).sigmoid().numpy() > opacity_threshold
+            xyz = xyz[keep_mask]
+            normal = normal[keep_mask]
+            f_dc = f_dc[keep_mask]
+            f_rest_full = f_rest_full[keep_mask]
+            scale = scale[keep_mask]
+            opacity = opacity[keep_mask]
+            rotation = rotation[keep_mask]
+            N = xyz.shape[0]
+        
         attributes = np.concatenate([xyz.numpy(), 
                                      normal.numpy().astype(np.uint8),
                                      f_dc.numpy(),
@@ -480,8 +496,6 @@ class LongLRM(nn.Module):
                                      scale.numpy(),
                                      rotation.numpy()
                                     ], axis=1)
-        if opacity_threshold is not None:                             
-            attributes = attributes[opacity.squeeze(-1).sigmoid().numpy() > opacity_threshold]
         attribute_list = ['x', 'y', 'z', 'nx', 'ny', 'nz']
         attribute_list += ['f_dc_{}'.format(i) for i in range(f_dc.shape[1])]
         attribute_list += ['f_rest_{}'.format(i) for i in range(f_rest_full.shape[1])]
@@ -494,6 +508,145 @@ class LongLRM(nn.Module):
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(save_path)
+        
+        # Create orthographic projections from x, y, z axes
+        if N > 0:  # Only if we have gaussians to render
+            # Get colors from DC spherical harmonics (convert to RGB)
+            colors = f_dc.numpy()
+            colors = np.clip(colors, 0, 1)  # Ensure colors are in [0,1]
+            
+            # Create orthographic projections
+            res = 512  # Resolution for the projection images
+            
+            # Function to create orthographic projection
+            def create_orthographic_projection(xyz, colors, axis='z', res=512):
+                """Create orthographic projection from specified axis"""
+                # Define which coordinates to use for projection
+                if axis == 'x':  # Looking down x-axis: project y,z
+                    coords = xyz[:, [1, 2]]  # y, z
+                    axis_name = 'x_axis'
+                elif axis == 'y':  # Looking down y-axis: project x,z  
+                    coords = xyz[:, [0, 2]]  # x, z
+                    axis_name = 'y_axis'
+                elif axis == 'z':  # Looking down z-axis: project x,y
+                    coords = xyz[:, [0, 1]]  # x, y
+                    axis_name = 'z_axis'
+                
+                # Normalize coordinates to [0, res-1]
+                coords_min = coords.min(axis=0, keepdims=True)
+                coords_max = coords.max(axis=0, keepdims=True)
+                coords_range = coords_max - coords_min
+                coords_range = np.where(coords_range < 1e-6, 1.0, coords_range)  # Avoid division by zero
+                
+                coords_norm = (coords - coords_min) / coords_range * (res - 1)
+                coords_int = coords_norm.astype(int)
+                
+                # Create image
+                img = np.zeros((res, res, 3), dtype=np.float32)
+                
+                # Simple scatter plot - each gaussian contributes to one pixel
+                for i in range(len(coords_int)):
+                    x_idx, y_idx = coords_int[i]
+                    if 0 <= x_idx < res and 0 <= y_idx < res:
+                        img[y_idx, x_idx] = colors[i]
+                
+                return img, axis_name
+            
+            # Create projections for all three axes
+            projections = {}
+            for axis in ['x', 'y', 'z']:
+                proj_img, axis_name = create_orthographic_projection(xyz.numpy(), colors, axis, res)
+                projections[axis_name] = proj_img
+            
+            # Save individual projection images
+            base_path = save_path.replace('.ply', '')
+            for axis_name, proj_img in projections.items():
+                proj_path = f"{base_path}_{axis_name}.png"
+                # Convert to torch tensor and save
+                proj_tensor = torch.from_numpy(proj_img).permute(2, 0, 1)  # (3, H, W)
+                torchvision.utils.save_image(proj_tensor, proj_path)
+            
+            # Create a combined image with all three projections side by side
+            combined_img = np.concatenate([projections['x_axis'], projections['y_axis'], projections['z_axis']], axis=1)
+            combined_path = f"{base_path}_projections.png"
+            combined_tensor = torch.from_numpy(combined_img).permute(2, 0, 1)  # (3, H, W*3)
+            torchvision.utils.save_image(combined_tensor, combined_path)
+
+    def create_gaussian_projections(self, gaussian_dict, opacity_threshold=None):
+        """
+        Create orthographic projections from gaussian splats for wandb logging
+        Returns: dict with projection images
+        """
+        import matplotlib.pyplot as plt
+        import torchvision
+        
+        xyz = gaussian_dict["xyz"].detach().cpu().float() # (N, 3)
+        feature = gaussian_dict["feature"].detach().cpu().float() # (N, (sh_degree+1)**2, 3)
+        f_dc = feature[:, 0].contiguous() # (N, 3) - DC spherical harmonics
+        opacity = gaussian_dict["opacity"].detach().cpu().float() # (N, 1)
+        
+        # Apply opacity threshold if specified
+        if opacity_threshold is not None:
+            keep_mask = opacity.squeeze(-1).sigmoid().numpy() > opacity_threshold
+            xyz = xyz[keep_mask]
+            f_dc = f_dc[keep_mask]
+            opacity = opacity[keep_mask]
+        
+        if xyz.shape[0] == 0:  # No gaussians to render
+            return None
+            
+        # Get colors from DC spherical harmonics (convert to RGB)
+        colors = f_dc.numpy()
+        colors = np.clip(colors, 0, 1)  # Ensure colors are in [0,1]
+        
+        # Create orthographic projections
+        res = 512  # Resolution for the projection images
+        
+        # Function to create orthographic projection
+        def create_orthographic_projection(xyz, colors, axis='z', res=512):
+            """Create orthographic projection from specified axis"""
+            # Define which coordinates to use for projection
+            if axis == 'x':  # Looking down x-axis: project y,z
+                coords = xyz[:, [1, 2]]  # y, z
+                axis_name = 'x_axis'
+            elif axis == 'y':  # Looking down y-axis: project x,z  
+                coords = xyz[:, [0, 2]]  # x, z
+                axis_name = 'y_axis'
+            elif axis == 'z':  # Looking down z-axis: project x,y
+                coords = xyz[:, [0, 1]]  # x, y
+                axis_name = 'z_axis'
+            
+            # Normalize coordinates to [0, res-1]
+            coords_min = coords.min(axis=0, keepdims=True)
+            coords_max = coords.max(axis=0, keepdims=True)
+            coords_range = coords_max - coords_min
+            coords_range = np.where(coords_range < 1e-6, 1.0, coords_range)  # Avoid division by zero
+            
+            coords_norm = (coords - coords_min) / coords_range * (res - 1)
+            coords_int = coords_norm.astype(int)
+            
+            # Create image
+            img = np.zeros((res, res, 3), dtype=np.float32)
+            
+            # Simple scatter plot - each gaussian contributes to one pixel
+            for i in range(len(coords_int)):
+                x_idx, y_idx = coords_int[i]
+                if 0 <= x_idx < res and 0 <= y_idx < res:
+                    img[y_idx, x_idx] = colors[i]
+            
+            return img, axis_name
+        
+        # Create projections for all three axes
+        projections = {}
+        for axis in ['x', 'y', 'z']:
+            proj_img, axis_name = create_orthographic_projection(xyz.numpy(), colors, axis, res)
+            projections[axis_name] = proj_img
+        
+        # Create a combined image with all three projections side by side
+        combined_img = np.concatenate([projections['x_axis'], projections['y_axis'], projections['z_axis']], axis=1)
+        projections['combined'] = combined_img
+        
+        return projections
 
     def save_input_video(self, input_intr, input_c2ws, gaussian_dict, H, W, save_path, insert_frame_num = 8):
         """
@@ -590,19 +743,38 @@ class LongLRM(nn.Module):
             disp_path = os.path.join(save_dir, "disp.png")
             torchvision.utils.save_image(disp_image, disp_path)
 
-        # save gaussian ply of first batch
+        # Always create gaussian projections for wandb logging
+        gaussians = output_dict["gaussians"]
+        gaussian_first = {k: v[0] for k, v in gaussians.items()}
+        opacity_threshold = self.config.model.gaussians.get("opacity_threshold", 0.001)
+        
+        # Create projections and log to wandb
+        projections = self.create_gaussian_projections(gaussian_first, opacity_threshold)
+        if projections is not None:
+            try:
+                import wandb
+                # Log individual projections
+                for axis_name, proj_img in projections.items():
+                    if axis_name != 'combined':
+                        proj_tensor = torch.from_numpy(proj_img).permute(2, 0, 1)  # (3, H, W)
+                        wandb.log({f"gaussian_projection_{axis_name}": wandb.Image(proj_tensor)}, step=None)
+                
+                # Log combined projection
+                combined_tensor = torch.from_numpy(projections['combined']).permute(2, 0, 1)  # (3, H, W*3)
+                wandb.log({"gaussian_projections_combined": wandb.Image(combined_tensor)}, step=None)
+            except ImportError:
+                pass  # wandb not available
+            except Exception as e:
+                print(f"Warning: Failed to log gaussian projections to wandb: {e}")
+
+        # save gaussian ply of first batch (if enabled)
         if save_gaussian:
-            gaussians = output_dict["gaussians"]
-            gaussian_first = {k: v[0] for k, v in gaussians.items()}
-            opacity_threshold = self.config.model.gaussians.get("opacity_threshold", 0.001)
             self.save_gaussian_ply(gaussian_first, os.path.join(save_dir, f"gaussians_{str(opacity_threshold).split('.')[-1]}.ply"), opacity_threshold)
 
         # save input traj video
         if save_video:
-            gaussians = output_dict["gaussians"]
             input_intr = input_dict["input_intr"][0]
             input_c2ws = input_dict["input_c2ws"][0]
-            gaussian_first = {k: v[0] for k, v in gaussians.items()}
             self.save_input_video(input_intr, input_c2ws, gaussian_first, H, W, os.path.join(save_dir, "input_traj.mp4"),
                                   insert_frame_num=self.config.get("insert_frame_num", 8))
 

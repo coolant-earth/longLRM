@@ -49,7 +49,7 @@ training:
   # wandb
   wandb_offline: false
   wandb_entity: aman190202-brown-university
-  wandb_project:  long-lrm
+  wandb_project:  long-lrm-debugging
 
   # losses
   l2_loss: 1.0
@@ -64,9 +64,9 @@ training:
   gaussian_depth_loss: 0.01
 
   # logging
-  print_every: 10
-  wandb_every: 10
-  checkpoint_every: 500
+  print_every: 1
+  wandb_every: 1
+  checkpoint_every: 100
   vis_every: 100
-  save_gaussian_every: 500
-  save_video_every: 500
+  save_gaussian_every: 100
+  save_video_every: 100
