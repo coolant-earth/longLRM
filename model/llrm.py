@@ -707,7 +707,7 @@ class LongLRM(nn.Module):
         subprocess.run(f"ffmpeg -y -i {tmp_save_path} -vcodec libx264 -f mp4 {save_path} -loglevel quiet", shell=True) 
         os.remove(tmp_save_path)
 
-    def save_visualization(self, input_dict, output_dict, save_dir, save_gaussian=False, save_video=False):
+    def save_visualization(self, input_dict, output_dict, save_dir, save_gaussian=False, save_video=False, step=None):
         import torchvision
         import matplotlib.pyplot as plt
         os.makedirs(save_dir, exist_ok=True)
@@ -753,19 +753,24 @@ class LongLRM(nn.Module):
         if projections is not None:
             try:
                 import wandb
+                print(f"Logging gaussian projections to wandb at step {step}")
                 # Log individual projections
                 for axis_name, proj_img in projections.items():
                     if axis_name != 'combined':
                         proj_tensor = torch.from_numpy(proj_img).permute(2, 0, 1)  # (3, H, W)
-                        wandb.log({f"gaussian_projection_{axis_name}": wandb.Image(proj_tensor)}, step=None)
+                        wandb.log({f"gaussian_projection_{axis_name}": wandb.Image(proj_tensor)}, step=step)
+                        print(f"Logged {axis_name} projection")
                 
                 # Log combined projection
                 combined_tensor = torch.from_numpy(projections['combined']).permute(2, 0, 1)  # (3, H, W*3)
-                wandb.log({"gaussian_projections_combined": wandb.Image(combined_tensor)}, step=None)
+                wandb.log({"gaussian_projections_combined": wandb.Image(combined_tensor)}, step=step)
+                print("Logged combined projection")
             except ImportError:
-                pass  # wandb not available
+                print("Warning: wandb not available")
             except Exception as e:
                 print(f"Warning: Failed to log gaussian projections to wandb: {e}")
+        else:
+            print("Warning: No gaussian projections created (no gaussians or all filtered out)")
 
         # save gaussian ply of first batch (if enabled)
         if save_gaussian:

@@ -387,7 +387,7 @@ while train_steps_done <= train_steps:
             save_gaussian = param_update_steps_done % config.training.save_gaussian_every == 0
             save_video = param_update_steps_done % config.training.save_video_every == 0
             model.module.save_visualization(data, ret_dict, os.path.join(checkpoint_dir, f"vis_{param_update_steps_done:09d}"),
-                                            save_gaussian = save_gaussian, save_video = save_video)
+                                            save_gaussian = save_gaussian, save_video = save_video, step = param_update_steps_done)
     torch.distributed.barrier()
 torch.distributed.barrier()
 destroy_process_group()
