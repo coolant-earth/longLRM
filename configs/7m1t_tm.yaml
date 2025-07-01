@@ -50,7 +50,9 @@ training:
   wandb_offline: false
   wandb_entity: aman190202-brown-university
   wandb_project:  long-lrm-debugging
+  wandb_name: "start-debugging"
 
+  
   # losses
   l2_loss: 1.0
   perceptual_loss: 1.0
@@ -68,5 +70,5 @@ training:
   wandb_every: 1
   checkpoint_every: 100
   vis_every: 100
-  save_gaussian_every: 100
+  save_gaussian_every: 10
   save_video_every: 100

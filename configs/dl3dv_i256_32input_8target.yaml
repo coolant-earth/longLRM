@@ -23,3 +23,4 @@ data_eval:
 training:
   batch_size_per_gpu: 10
   train_steps: 180000
+  resume_ckpt: "checkpoints/checkpoint_000004500.pt"

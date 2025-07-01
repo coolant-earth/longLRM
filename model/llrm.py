@@ -572,81 +572,54 @@ class LongLRM(nn.Module):
             combined_tensor = torch.from_numpy(combined_img).permute(2, 0, 1)  # (3, H, W*3)
             torchvision.utils.save_image(combined_tensor, combined_path)
 
+            
+
     def create_gaussian_projections(self, gaussian_dict, opacity_threshold=None):
         """
-        Create orthographic projections from gaussian splats for wandb logging
-        Returns: dict with projection images
+        Orthographic presence maps (x / y / z) for Gaussian splats.
+        Returns: dict of projection images suitable for wandb logging.
         """
-        import matplotlib.pyplot as plt
-        import torchvision
-        
-        xyz = gaussian_dict["xyz"].detach().cpu().float() # (N, 3)
-        feature = gaussian_dict["feature"].detach().cpu().float() # (N, (sh_degree+1)**2, 3)
-        f_dc = feature[:, 0].contiguous() # (N, 3) - DC spherical harmonics
-        opacity = gaussian_dict["opacity"].detach().cpu().float() # (N, 1)
-        
-        # Apply opacity threshold if specified
+        import numpy as np                    # need NumPy
+        xyz     = gaussian_dict["xyz"].detach().cpu().float()          # (N, 3)
+        opacity = gaussian_dict["opacity"].detach().cpu().float()      # (N, 1)
+
+        # ── opacity filter ────────────────────────────────────────────
         if opacity_threshold is not None:
-            keep_mask = opacity.squeeze(-1).sigmoid().numpy() > opacity_threshold
-            xyz = xyz[keep_mask]
-            f_dc = f_dc[keep_mask]
-            opacity = opacity[keep_mask]
-        
-        if xyz.shape[0] == 0:  # No gaussians to render
+            keep = opacity.squeeze(-1).sigmoid() > opacity_threshold   # torch mask
+            xyz  = xyz[keep]
+
+        if xyz.numel() == 0:                                           # nothing to show
             return None
-            
-        # Get colors from DC spherical harmonics (convert to RGB)
-        colors = f_dc.numpy()
-        colors = np.clip(colors, 0, 1)  # Ensure colors are in [0,1]
-        
-        # Create orthographic projections
-        res = 512  # Resolution for the projection images
-        
-        # Function to create orthographic projection
-        def create_orthographic_projection(xyz, colors, axis='z', res=512):
-            """Create orthographic projection from specified axis"""
-            # Define which coordinates to use for projection
-            if axis == 'x':  # Looking down x-axis: project y,z
-                coords = xyz[:, [1, 2]]  # y, z
-                axis_name = 'x_axis'
-            elif axis == 'y':  # Looking down y-axis: project x,z  
-                coords = xyz[:, [0, 2]]  # x, z
-                axis_name = 'y_axis'
-            elif axis == 'z':  # Looking down z-axis: project x,y
-                coords = xyz[:, [0, 1]]  # x, y
-                axis_name = 'z_axis'
-            
-            # Normalize coordinates to [0, res-1]
-            coords_min = coords.min(axis=0, keepdims=True)
-            coords_max = coords.max(axis=0, keepdims=True)
-            coords_range = coords_max - coords_min
-            coords_range = np.where(coords_range < 1e-6, 1.0, coords_range)  # Avoid division by zero
-            
-            coords_norm = (coords - coords_min) / coords_range * (res - 1)
-            coords_int = coords_norm.astype(int)
-            
-            # Create image
-            img = np.zeros((res, res, 3), dtype=np.float32)
-            
-            # Simple scatter plot - each gaussian contributes to one pixel
-            for i in range(len(coords_int)):
-                x_idx, y_idx = coords_int[i]
-                if 0 <= x_idx < res and 0 <= y_idx < res:
-                    img[y_idx, x_idx] = colors[i]
-            
-            return img, axis_name
-        
-        # Create projections for all three axes
-        projections = {}
-        for axis in ['x', 'y', 'z']:
-            proj_img, axis_name = create_orthographic_projection(xyz.numpy(), colors, axis, res)
-            projections[axis_name] = proj_img
-        
-        # Create a combined image with all three projections side by side
-        combined_img = np.concatenate([projections['x_axis'], projections['y_axis'], projections['z_axis']], axis=1)
-        projections['combined'] = combined_img
-        
+
+        xyz_np = xyz.numpy()                                           # single conversion
+        res    = 512                                                   # output size
+
+        # ── helper: one axis projection ───────────────────────────────
+        def ortho_presence(coords_2d: np.ndarray) -> np.ndarray:
+            mn, mx = coords_2d.min(0), coords_2d.max(0)
+            rng    = np.where((mx - mn) < 1e-6, 1.0, mx - mn)          # avoid /0
+            idx    = ((coords_2d - mn) / rng * (res - 1)).round().astype(np.int32)
+            cols, rows = idx[:, 0], idx[:, 1]
+            flat        = rows * res + cols
+
+            img = np.zeros((res * res, 3), dtype=np.float32)           # RGB for wandb
+            img[flat] = 1.0                                            # presence = white
+            return img.reshape(res, res, 3)
+
+        # ── build the three projections ───────────────────────────────
+        projections = {
+            "x_axis": ortho_presence(xyz_np[:, [1, 2]]),   # look down +x → (y, z)
+            "y_axis": ortho_presence(xyz_np[:, [0, 2]]),   # look down +y → (x, z)
+            "z_axis": ortho_presence(xyz_np[:, [0, 1]]),   # look down +z → (x, y)
+        }
+        projections["combined"] = np.concatenate(
+            [projections["x_axis"],
+            projections["y_axis"],
+            projections["z_axis"]],
+            axis=1,
+        )
         return projections
+
 
     def save_input_video(self, input_intr, input_c2ws, gaussian_dict, H, W, save_path, insert_frame_num = 8):
         """
