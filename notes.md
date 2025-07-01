@@ -6,7 +6,13 @@ unzip awscliv2.zip
 ./aws/install
 ```
 ```
-torchrun --standalone --nproc_per_node=8 main.py --config configs/7m1t_tm.yaml --default-config configs/dl3dv_i256_32input_8target.yaml
+torchrun --standalone --nproc_per_node=8 main.py --config configs/stage07kGT.yaml --default-config configs/dl3dv_i256_32input_8target.yaml
 ```
+
+
+12:01 PM training on just 18 scenes (2 batches )
+
+1. problem observed - gaussians in the back can be avoided complelety
+
 
 

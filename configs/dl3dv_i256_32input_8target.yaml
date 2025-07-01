@@ -21,6 +21,5 @@ data_eval:
   reverse_input_prob: 0.0
 
 training:
-  batch_size_per_gpu: 10
-  train_steps: 180000
-  resume_ckpt: "checkpoints/checkpoint_000004500.pt"
+  batch_size_per_gpu: 18
+  train_steps: 107000
